@@ -1,8 +1,8 @@
 import sys
 sys.path.insert(0, "lib/ln")
-from .ln import rpc_pb2_grpc, rpc_pb2
+from .ln import rpc_pb2
 import os
-from . import keystore, bitcoin, network, daemon, interface
+from . import keystore, bitcoin, daemon, interface
 import socket
 
 import concurrent.futures as futures
@@ -15,14 +15,20 @@ import binascii
 WALLET = None
 NETWORK = None
 
+def SetHdSeed(json):
+  # TODO
 def ConfirmedBalance(json):
-  global K_compressed, pubk
+  global pubk
   print(json)
   request = rpc_pb2.ConfirmedBalanceRequest()
   json_format.Parse(json, request)
   m = rpc_pb2.ConfirmedBalanceResponse()
   confs = request.confirmations
   witness = request.witness # bool
+
+  WALLET.synchronize()
+  WALLET.wait_until_synchronized()
+
   m.amount = sum(WALLET.get_balance())
   msg = json_format.MessageToJson(m)
   print("repl", msg)
@@ -33,17 +39,18 @@ def NewAddress(json):
   json_format.Parse(json, request)
   m = rpc_pb2.NewAddressResponse()
   if request.type == rpc_pb2.NewAddressRequest.WITNESS_PUBKEY_HASH:
-    m.address = bitcoin.public_key_to_p2wpkh(K_compressed)
+    m.address = WALLET.get_unused_address()
   elif request.type == rpc_pb2.NewAddressRequest.NESTED_PUBKEY_HASH:
     assert False
   elif request.type == rpc_pb2.NewAddressRequest.PUBKEY_HASH:
-    m.address = bitcoin.public_key_to_p2pkh(K_compressed)
+    assert False
   else:
     assert False
   msg = json_format.MessageToJson(m)
   print("repl", msg)
   return msg
 def FetchRootKey(json):
+  global K_compressed
   print(json)
   request = rpc_pb2.FetchRootKeyRequest()
   json_format.Parse(json, request)
@@ -55,11 +62,15 @@ def FetchRootKey(json):
 
 cl = rpc_pb2.ListUnspentWitnessRequest
 def ListUnspentWitness(json):
-  global K_compressed, pubk
+  global pubk
   req = cl()
   json_format.Parse(json, req)
   confs = req.minConfirmations
   print("confs", confs)
+
+  WALLET.synchronize()
+  WALLET.wait_until_synchronized()
+
   unspent = WALLET.get_utxos()
   print("unspent", unspent)
   m = rpc_pb2.ListUnspentWitnessResponse()
@@ -94,14 +105,28 @@ def serve(config):
   server.register_function(ConfirmedBalance)
   server.register_function(NewAddress)
   server.register_function(ListUnspentWitness)
+  server.register_function(SetHdSeed)
   server.serve_forever()
 
 def test_lightning(wallet, networ, config):
   global WALLET, NETWORK, pubk, K_compressed
   WALLET = wallet
-  #assert networ is not None
+  assert networ is None
+
+  from . import network
+  assert len(network.DEFAULT_SERVERS) == 1
+  networ = network.Network(config)
+  networ.start()
+  wallet.start_threads(networ)
+  wallet.synchronize()
+  print("WAITING!!!!")
+  wallet.wait_until_synchronized()
+  print("done")
+
   NETWORK = networ
   print("utxos", WALLET.get_utxos())
+
+  assert bitcoin.deserialize_xpub(wallet.keystore.xpub)[0] == "segwit"
 
   pubk = wallet.get_unused_address()
   K_compressed = bytes(bytearray.fromhex(wallet.get_public_keys(pubk)[0]))
@@ -110,7 +135,7 @@ def test_lightning(wallet, networ, config):
   assert len(K_compressed) == 33, len(K_compressed)
 
   assert wallet.pubkeys_to_address(binascii.hexlify(K_compressed).decode("utf-8")) in wallet.get_addresses()
-  print(q(pubk, 'blockchain.address.listunspent'))
+  #print(q(pubk, 'blockchain.address.listunspent'))
 
   serve(config)
 
