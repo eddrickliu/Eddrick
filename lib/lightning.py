@@ -10,6 +10,7 @@ import time
 from jsonrpclib.SimpleJSONRPCServer import SimpleJSONRPCServer
 import json as jsonm
 from google.protobuf import json_format
+import binascii
 
 WALLET = None
 NETWORK = None
@@ -102,14 +103,13 @@ def test_lightning(wallet, networ, config):
   NETWORK = networ
   print("utxos", WALLET.get_utxos())
 
-  pubk = wallet.get_addresses()[0]
-  print(pubk)
-  K_compressed = wallet.keystore.derive_pubkey(False, 0)
-  K_compressed = bytes(bytearray.fromhex(K_compressed))
+  pubk = wallet.get_unused_address()
+  K_compressed = bytes(bytearray.fromhex(wallet.get_public_keys(pubk)[0]))
+  #adr = bitcoin.public_key_to_p2wpkh(K_compressed)
 
   assert len(K_compressed) == 33, len(K_compressed)
 
-  print(bitcoin.public_key_to_p2wpkh(K_compressed))
+  assert wallet.pubkeys_to_address(binascii.hexlify(K_compressed).decode("utf-8")) in wallet.get_addresses()
   print(q(pubk, 'blockchain.address.listunspent'))
 
   serve(config)
